@@ -1,133 +1,224 @@
 """
 core/database.py
 ────────────────
-Gestión de la base de datos SQLite.
-Guarda historial por período, movimientos, sucursales y conciliación.
+Capa de persistencia. Soporta dos motores transparentemente:
+
+- SQLite local (por defecto, en `data/transbank.db`)
+- Postgres (si la variable de entorno o secret `DATABASE_URL` está definida,
+  por ejemplo Neon: postgresql+psycopg2://user:pass@host/db?sslmode=require)
+
+El API público de funciones se mantiene idéntico al original basado en sqlite3.
 """
-import sqlite3
+from __future__ import annotations
+
 import os
-import pandas as pd
 from datetime import datetime
-from config import DB_PATH, DATA_DIR
+from typing import Iterable, Sequence
+
+import pandas as pd
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
+
+from config import DATA_DIR, DB_PATH, DATABASE_URL
 
 
-# ─── Inicialización ───────────────────────────────────────────────────────────
+# ─── Engine ───────────────────────────────────────────────────────────────────
 
-def get_connection() -> sqlite3.Connection:
+_engine: Engine | None = None
+
+
+def _build_engine() -> Engine:
+    if DATABASE_URL:
+        # Postgres / cualquier URL SQLAlchemy soportada
+        return create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
+    # SQLite local
     os.makedirs(DATA_DIR, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+    return create_engine(
+        f"sqlite:///{DB_PATH}",
+        future=True,
+        connect_args={"check_same_thread": False},
+    )
 
 
-def init_db():
-    """Crea todas las tablas si no existen."""
-    with get_connection() as conn:
-        conn.executescript("""
+def get_engine() -> Engine:
+    global _engine
+    if _engine is None:
+        _engine = _build_engine()
+    return _engine
+
+
+def _is_postgres() -> bool:
+    return get_engine().dialect.name == "postgresql"
+
+
+# ─── DDL (esquema) ────────────────────────────────────────────────────────────
+
+def _ddl_statements() -> list[str]:
+    """Retorna los CREATE TABLE adaptados al dialecto activo."""
+    if _is_postgres():
+        pk = "BIGSERIAL PRIMARY KEY"
+        text_t = "TEXT"
+        real_t = "DOUBLE PRECISION"
+        int_t = "INTEGER"
+    else:  # sqlite
+        pk = "INTEGER PRIMARY KEY AUTOINCREMENT"
+        text_t = "TEXT"
+        real_t = "REAL"
+        int_t = "INTEGER"
+
+    return [
+        f"""
         CREATE TABLE IF NOT EXISTS periodos (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            periodo         TEXT NOT NULL,          -- 'YYYY-MM'
-            empresa_rut     TEXT,
-            empresa_nombre  TEXT,
-            fecha_proceso   TEXT,
-            total_ventas    REAL DEFAULT 0,
-            total_comision  REAL DEFAULT 0,
-            total_neto      REAL DEFAULT 0,
-            UNIQUE(periodo)
-        );
-
+            id              {pk},
+            periodo         {text_t} NOT NULL UNIQUE,
+            empresa_rut     {text_t},
+            empresa_nombre  {text_t},
+            fecha_proceso   {text_t},
+            total_ventas    {real_t} DEFAULT 0,
+            total_comision  {real_t} DEFAULT 0,
+            total_neto      {real_t} DEFAULT 0
+        )
+        """,
+        f"""
         CREATE TABLE IF NOT EXISTS movimientos (
-            id                        INTEGER PRIMARY KEY AUTOINCREMENT,
-            periodo                   TEXT NOT NULL,
-            tipo_archivo              TEXT NOT NULL,   -- DEBITO / CREDITO
-            tipo_transaccion          TEXT,
-            fecha_venta               TEXT,
-            tipo_tarjeta              TEXT,
-            identificador             TEXT,
-            tipo_cuota                TEXT,
-            monto_original            REAL DEFAULT 0,
-            codigo_autorizacion       TEXT,
-            cuota_actual              INTEGER DEFAULT 1,
-            cuota_total               INTEGER DEFAULT 1,
-            monto_abono               REAL DEFAULT 0,
-            comision_iva              REAL DEFAULT 0,
-            comision_adicional_iva    REAL DEFAULT 0,
-            numero_boleta             TEXT,
-            monto_anulacion           REAL DEFAULT 0,
-            devolucion_comision       REAL DEFAULT 0,
-            monto_retencion           REAL DEFAULT 0,
-            fecha_abono               TEXT,
-            cuenta_abono              TEXT,
-            local_codigo              TEXT,
-            local_nombre              TEXT,
-            tipo_documento            TEXT,
-            neto                      REAL DEFAULT 0,
-            estado_conciliacion       TEXT DEFAULT 'PENDIENTE',
-            hash_unico                TEXT
-        );
-
+            id                        {pk},
+            periodo                   {text_t} NOT NULL,
+            tipo_archivo              {text_t} NOT NULL,
+            tipo_transaccion          {text_t},
+            fecha_venta               {text_t},
+            tipo_tarjeta              {text_t},
+            identificador             {text_t},
+            tipo_cuota                {text_t},
+            monto_original            {real_t} DEFAULT 0,
+            codigo_autorizacion       {text_t},
+            cuota_actual              {int_t}  DEFAULT 1,
+            cuota_total               {int_t}  DEFAULT 1,
+            monto_abono               {real_t} DEFAULT 0,
+            comision_iva              {real_t} DEFAULT 0,
+            comision_adicional_iva    {real_t} DEFAULT 0,
+            numero_boleta             {text_t},
+            monto_anulacion           {real_t} DEFAULT 0,
+            devolucion_comision       {real_t} DEFAULT 0,
+            monto_retencion           {real_t} DEFAULT 0,
+            fecha_abono               {text_t},
+            cuenta_abono              {text_t},
+            local_codigo              {text_t},
+            local_nombre              {text_t},
+            tipo_documento            {text_t},
+            neto                      {real_t} DEFAULT 0,
+            estado_conciliacion       {text_t} DEFAULT 'PENDIENTE',
+            hash_unico                {text_t} UNIQUE
+        )
+        """,
+        f"""
         CREATE TABLE IF NOT EXISTS liquidaciones (
-            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            periodo             TEXT NOT NULL,
-            fecha               TEXT,
-            descripcion         TEXT,
-            monto               REAL DEFAULT 0,
-            referencia          TEXT,
-            estado_conciliacion TEXT DEFAULT 'PENDIENTE'
-        );
-
+            id                  {pk},
+            periodo             {text_t} NOT NULL,
+            fecha               {text_t},
+            descripcion         {text_t},
+            monto               {real_t} DEFAULT 0,
+            referencia          {text_t},
+            estado_conciliacion {text_t} DEFAULT 'PENDIENTE'
+        )
+        """,
+        f"""
         CREATE TABLE IF NOT EXISTS sucursales (
-            codigo          TEXT PRIMARY KEY,
-            nombre          TEXT NOT NULL,
-            cuenta_contable TEXT,
-            activa          INTEGER DEFAULT 1
-        );
+            codigo          {text_t} PRIMARY KEY,
+            nombre          {text_t} NOT NULL,
+            cuenta_contable {text_t},
+            activa          {int_t} DEFAULT 1
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_mov_periodo     ON movimientos(periodo)",
+        "CREATE INDEX IF NOT EXISTS idx_mov_sucursal    ON movimientos(local_codigo)",
+        "CREATE INDEX IF NOT EXISTS idx_mov_fecha_abono ON movimientos(fecha_abono)",
+        "CREATE INDEX IF NOT EXISTS idx_mov_hash        ON movimientos(hash_unico)",
+        "CREATE INDEX IF NOT EXISTS idx_liq_periodo     ON liquidaciones(periodo)",
+    ]
 
-        CREATE INDEX IF NOT EXISTS idx_mov_periodo    ON movimientos(periodo);
-        CREATE INDEX IF NOT EXISTS idx_mov_sucursal   ON movimientos(local_codigo);
-        CREATE INDEX IF NOT EXISTS idx_mov_fecha_abono ON movimientos(fecha_abono);
-        CREATE INDEX IF NOT EXISTS idx_mov_hash       ON movimientos(hash_unico);
-        CREATE INDEX IF NOT EXISTS idx_liq_periodo    ON liquidaciones(periodo);
-        """)
+
+def init_db() -> None:
+    """Crea todas las tablas si no existen."""
+    eng = get_engine()
+    with eng.begin() as conn:
+        for stmt in _ddl_statements():
+            conn.execute(text(stmt))
+
+
+# ─── Helpers internos ────────────────────────────────────────────────────────
+
+def _read_sql(query: str, params: dict | None = None) -> pd.DataFrame:
+    eng = get_engine()
+    with eng.connect() as conn:
+        return pd.read_sql_query(text(query), conn, params=params or {})
+
+
+def _exec(query: str, params: dict | None = None) -> None:
+    eng = get_engine()
+    with eng.begin() as conn:
+        conn.execute(text(query), params or {})
+
+
+def _exec_many(query: str, rows: Sequence[dict]) -> None:
+    if not rows:
+        return
+    eng = get_engine()
+    with eng.begin() as conn:
+        conn.execute(text(query), list(rows))
 
 
 # ─── Períodos ─────────────────────────────────────────────────────────────────
 
 def get_periodos() -> list:
-    with get_connection() as conn:
-        rows = conn.execute(
-            "SELECT * FROM periodos ORDER BY periodo DESC"
-        ).fetchall()
-    return [dict(r) for r in rows]
+    df = _read_sql("SELECT * FROM periodos ORDER BY periodo DESC")
+    return df.to_dict(orient="records")
 
 
 def upsert_periodo(periodo: str, empresa_rut: str = "", empresa_nombre: str = "") -> int:
-    with get_connection() as conn:
-        conn.execute("""
-            INSERT INTO periodos (periodo, empresa_rut, empresa_nombre, fecha_proceso)
-            VALUES (?,?,?,?)
-            ON CONFLICT(periodo) DO UPDATE SET
-                empresa_rut    = excluded.empresa_rut,
-                empresa_nombre = excluded.empresa_nombre,
-                fecha_proceso  = excluded.fecha_proceso
-        """, (periodo, empresa_rut, empresa_nombre, datetime.now().isoformat()))
-        row = conn.execute("SELECT id FROM periodos WHERE periodo=?", (periodo,)).fetchone()
-    return row["id"]
+    _exec(
+        """
+        INSERT INTO periodos (periodo, empresa_rut, empresa_nombre, fecha_proceso)
+        VALUES (:periodo, :empresa_rut, :empresa_nombre, :fecha_proceso)
+        ON CONFLICT(periodo) DO UPDATE SET
+            empresa_rut    = EXCLUDED.empresa_rut,
+            empresa_nombre = EXCLUDED.empresa_nombre,
+            fecha_proceso  = EXCLUDED.fecha_proceso
+        """,
+        {
+            "periodo": periodo,
+            "empresa_rut": empresa_rut,
+            "empresa_nombre": empresa_nombre,
+            "fecha_proceso": datetime.now().isoformat(),
+        },
+    )
+    df = _read_sql("SELECT id FROM periodos WHERE periodo = :periodo", {"periodo": periodo})
+    return int(df.iloc[0]["id"]) if not df.empty else 0
 
 
-def actualizar_totales_periodo(periodo: str):
-    with get_connection() as conn:
-        conn.execute("""
-            UPDATE periodos SET
-                total_ventas   = (SELECT COALESCE(SUM(monto_original),0) FROM movimientos WHERE periodo=? AND tipo_transaccion='Venta'),
-                total_comision = (SELECT COALESCE(SUM(comision_iva),0)   FROM movimientos WHERE periodo=? AND tipo_transaccion='Venta'),
-                total_neto     = (SELECT COALESCE(SUM(neto),0)           FROM movimientos WHERE periodo=? AND tipo_transaccion='Venta')
-            WHERE periodo=?
-        """, (periodo, periodo, periodo, periodo))
+def actualizar_totales_periodo(periodo: str) -> None:
+    _exec(
+        """
+        UPDATE periodos SET
+            total_ventas   = COALESCE((SELECT SUM(monto_original) FROM movimientos WHERE periodo=:p AND tipo_transaccion='Venta'),0),
+            total_comision = COALESCE((SELECT SUM(comision_iva)   FROM movimientos WHERE periodo=:p AND tipo_transaccion='Venta'),0),
+            total_neto     = COALESCE((SELECT SUM(neto)           FROM movimientos WHERE periodo=:p AND tipo_transaccion='Venta'),0)
+        WHERE periodo = :p
+        """,
+        {"p": periodo},
+    )
 
 
 # ─── Movimientos ──────────────────────────────────────────────────────────────
+
+_MOV_COLS = [
+    'periodo', 'tipo_archivo', 'tipo_transaccion', 'fecha_venta', 'tipo_tarjeta',
+    'identificador', 'tipo_cuota', 'monto_original', 'codigo_autorizacion',
+    'cuota_actual', 'cuota_total', 'monto_abono', 'comision_iva',
+    'comision_adicional_iva', 'monto_anulacion', 'devolucion_comision',
+    'monto_retencion', 'fecha_abono', 'cuenta_abono',
+    'local_codigo', 'local_nombre', 'neto', 'hash_unico',
+]
+
 
 def save_movimientos(df: pd.DataFrame, periodo: str, sobrescribir: bool = False) -> int:
     """Guarda movimientos evitando duplicados por hash_unico."""
@@ -135,61 +226,53 @@ def save_movimientos(df: pd.DataFrame, periodo: str, sobrescribir: bool = False)
         return 0
 
     if sobrescribir:
-        with get_connection() as conn:
-            conn.execute("DELETE FROM movimientos WHERE periodo=? AND tipo_archivo=?",
-                         (periodo, df['tipo_archivo'].iloc[0]))
-
-    cols = [
-        'periodo', 'tipo_archivo', 'tipo_transaccion', 'fecha_venta', 'tipo_tarjeta',
-        'identificador', 'tipo_cuota', 'monto_original', 'codigo_autorizacion',
-        'cuota_actual', 'cuota_total', 'monto_abono', 'comision_iva',
-        'comision_adicional_iva', 'monto_anulacion', 'devolucion_comision',
-        'monto_retencion', 'fecha_abono', 'cuenta_abono',
-        'local_codigo', 'local_nombre', 'neto', 'hash_unico'
-    ]
+        _exec(
+            "DELETE FROM movimientos WHERE periodo = :p AND tipo_archivo = :t",
+            {"p": periodo, "t": df['tipo_archivo'].iloc[0]},
+        )
 
     df = df.copy()
     df['periodo'] = periodo
 
-    # Convertir fechas a string
-    for c in ['fecha_venta', 'fecha_abono']:
+    for c in ('fecha_venta', 'fecha_abono'):
         if c in df.columns:
             df[c] = df[c].astype(str).replace('NaT', '')
 
-    # Solo columnas que existen
-    cols_disponibles = [c for c in cols if c in df.columns]
-    registros = df[cols_disponibles].values.tolist()
+    cols_disponibles = [c for c in _MOV_COLS if c in df.columns]
 
-    placeholders = ','.join(['?' for _ in cols_disponibles])
-    col_str      = ','.join(cols_disponibles)
+    # Filtrado previo de hashes existentes (rápido y portable)
+    existing = _read_sql(
+        "SELECT hash_unico FROM movimientos WHERE periodo = :p",
+        {"p": periodo},
+    )
+    existing_hashes = set(existing['hash_unico'].dropna().tolist()) if not existing.empty else set()
 
-    inserted = 0
-    with get_connection() as conn:
-        existing_hashes = set(
-            r[0] for r in conn.execute(
-                "SELECT hash_unico FROM movimientos WHERE periodo=?", (periodo,)
-            ).fetchall()
-        )
-        nuevos = [r for r in registros if r[cols_disponibles.index('hash_unico')] not in existing_hashes]
-        if nuevos:
-            conn.executemany(
-                f"INSERT OR IGNORE INTO movimientos ({col_str}) VALUES ({placeholders})",
-                nuevos
-            )
-            inserted = len(nuevos)
+    df_nuevos = df[~df['hash_unico'].isin(existing_hashes)] if 'hash_unico' in df.columns else df
+
+    if df_nuevos.empty:
+        actualizar_totales_periodo(periodo)
+        return 0
+
+    rows = df_nuevos[cols_disponibles].to_dict(orient='records')
+
+    placeholders = ', '.join(f":{c}" for c in cols_disponibles)
+    col_str = ', '.join(cols_disponibles)
+    on_conflict = "ON CONFLICT (hash_unico) DO NOTHING" if 'hash_unico' in cols_disponibles else ""
+
+    _exec_many(
+        f"INSERT INTO movimientos ({col_str}) VALUES ({placeholders}) {on_conflict}",
+        rows,
+    )
 
     actualizar_totales_periodo(periodo)
-    return inserted
+    return len(rows)
 
 
 def get_movimientos(periodo: str, solo_ventas: bool = True) -> pd.DataFrame:
-    query = "SELECT * FROM movimientos WHERE periodo=?"
-    params = [periodo]
+    query = "SELECT * FROM movimientos WHERE periodo = :p"
     if solo_ventas:
         query += " AND tipo_transaccion='Venta'"
-    with get_connection() as conn:
-        df = pd.read_sql_query(query, conn, params=params)
-    return df
+    return _read_sql(query, {"p": periodo})
 
 
 def get_movimientos_por_sucursal(periodo: str) -> pd.DataFrame:
@@ -204,12 +287,11 @@ def get_movimientos_por_sucursal(periodo: str) -> pd.DataFrame:
             SUM(neto)             AS total_neto,
             SUM(CASE WHEN cuota_total > 1 THEN monto_original ELSE 0 END) AS ventas_cuotas
         FROM movimientos
-        WHERE periodo=? AND tipo_transaccion='Venta'
+        WHERE periodo = :p AND tipo_transaccion='Venta'
         GROUP BY local_codigo, local_nombre, tipo_archivo
         ORDER BY total_ventas DESC
     """
-    with get_connection() as conn:
-        return pd.read_sql_query(query, conn, params=[periodo])
+    return _read_sql(query, {"p": periodo})
 
 
 def get_resumen_diario(periodo: str) -> pd.DataFrame:
@@ -221,30 +303,28 @@ def get_resumen_diario(periodo: str) -> pd.DataFrame:
             SUM(monto_abono)    AS total_abono,
             SUM(neto)           AS total_neto
         FROM movimientos
-        WHERE periodo=? AND tipo_transaccion='Venta'
+        WHERE periodo = :p AND tipo_transaccion='Venta'
         GROUP BY fecha_abono, tipo_archivo
         ORDER BY fecha_abono
     """
-    with get_connection() as conn:
-        return pd.read_sql_query(query, conn, params=[periodo])
+    return _read_sql(query, {"p": periodo})
 
 
 def get_pendientes(periodo: str) -> pd.DataFrame:
     query = """
         SELECT *
         FROM movimientos
-        WHERE periodo=? AND tipo_transaccion='Venta'
+        WHERE periodo = :p AND tipo_transaccion='Venta'
           AND cuota_total > 1
           AND cuota_actual < cuota_total
         ORDER BY local_nombre, fecha_venta
     """
-    with get_connection() as conn:
-        return pd.read_sql_query(query, conn, params=[periodo])
+    return _read_sql(query, {"p": periodo})
 
 
 # ─── Sucursales ───────────────────────────────────────────────────────────────
 
-def sync_sucursales(df_movimientos: pd.DataFrame):
+def sync_sucursales(df_movimientos: pd.DataFrame) -> None:
     """Actualiza la tabla de sucursales a partir de los movimientos cargados."""
     if 'local_codigo' not in df_movimientos.columns:
         return
@@ -253,20 +333,22 @@ def sync_sucursales(df_movimientos: pd.DataFrame):
         .dropna()
         .drop_duplicates('local_codigo')
     )
-    with get_connection() as conn:
-        for _, row in sucursales.iterrows():
-            conn.execute("""
-                INSERT OR IGNORE INTO sucursales (codigo, nombre)
-                VALUES (?,?)
-            """, (row['local_codigo'], row['local_nombre']))
+    if sucursales.empty:
+        return
+    rows = [
+        {"codigo": r['local_codigo'], "nombre": r['local_nombre']}
+        for _, r in sucursales.iterrows()
+    ]
+    _exec_many(
+        "INSERT INTO sucursales (codigo, nombre) VALUES (:codigo, :nombre) "
+        "ON CONFLICT (codigo) DO NOTHING",
+        rows,
+    )
 
 
 def get_sucursales() -> list:
-    with get_connection() as conn:
-        rows = conn.execute(
-            "SELECT * FROM sucursales ORDER BY nombre"
-        ).fetchall()
-    return [dict(r) for r in rows]
+    df = _read_sql("SELECT * FROM sucursales ORDER BY nombre")
+    return df.to_dict(orient="records")
 
 
 # ─── Liquidaciones (cartola bancaria) ────────────────────────────────────────
@@ -275,36 +357,33 @@ def save_liquidaciones(df: pd.DataFrame, periodo: str, sobrescribir: bool = Fals
     if df.empty:
         return 0
     if sobrescribir:
-        with get_connection() as conn:
-            conn.execute("DELETE FROM liquidaciones WHERE periodo=?", (periodo,))
+        _exec("DELETE FROM liquidaciones WHERE periodo = :p", {"p": periodo})
+
     df = df.copy()
     df['periodo'] = periodo
     cols = ['periodo', 'fecha', 'descripcion', 'monto', 'referencia']
     cols_disponibles = [c for c in cols if c in df.columns]
-    registros = df[cols_disponibles].values.tolist()
-    placeholders = ','.join(['?' for _ in cols_disponibles])
-    col_str = ','.join(cols_disponibles)
-    with get_connection() as conn:
-        conn.executemany(
-            f"INSERT INTO liquidaciones ({col_str}) VALUES ({placeholders})",
-            registros
-        )
-    return len(registros)
+    rows = df[cols_disponibles].to_dict(orient='records')
+    placeholders = ', '.join(f":{c}" for c in cols_disponibles)
+    col_str = ', '.join(cols_disponibles)
+    _exec_many(
+        f"INSERT INTO liquidaciones ({col_str}) VALUES ({placeholders})",
+        rows,
+    )
+    return len(rows)
 
 
 def get_liquidaciones(periodo: str) -> pd.DataFrame:
-    with get_connection() as conn:
-        return pd.read_sql_query(
-            "SELECT * FROM liquidaciones WHERE periodo=?",
-            conn, params=[periodo]
-        )
+    return _read_sql(
+        "SELECT * FROM liquidaciones WHERE periodo = :p",
+        {"p": periodo},
+    )
 
 
 def periodo_tiene_datos(periodo: str, tipo: str) -> bool:
     """Verifica si ya existen datos cargados para ese período y tipo."""
-    with get_connection() as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) as n FROM movimientos WHERE periodo=? AND tipo_archivo=?",
-            (periodo, tipo)
-        ).fetchone()
-    return row["n"] > 0
+    df = _read_sql(
+        "SELECT COUNT(*) AS n FROM movimientos WHERE periodo = :p AND tipo_archivo = :t",
+        {"p": periodo, "t": tipo},
+    )
+    return int(df.iloc[0]["n"]) > 0

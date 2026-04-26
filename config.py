@@ -6,6 +6,18 @@ DATA_DIR   = os.path.join(BASE_DIR, "data")
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 DB_PATH    = os.path.join(DATA_DIR, "transbank.db")
 
+# ─── Base de datos ────────────────────────────────────────────────────────────
+# Si DATABASE_URL está definida (variable de entorno o Streamlit secret),
+# se usa ese motor (ej. Postgres en Neon/Supabase). Si no, SQLite local.
+# Ejemplo Postgres: postgresql+psycopg2://user:pass@host/dbname?sslmode=require
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+try:
+    import streamlit as _st  # type: ignore
+    if not DATABASE_URL and hasattr(_st, "secrets"):
+        DATABASE_URL = str(_st.secrets.get("DATABASE_URL", "")).strip()
+except Exception:
+    pass
+
 # ─── Tipo de tarjeta (VI / MC → nombre legible) ───────────────────────────────
 TIPO_TARJETA_MAP = {
     "VI":  "VISA",
