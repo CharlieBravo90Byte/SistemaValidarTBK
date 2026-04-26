@@ -21,20 +21,31 @@ from views.softland   import render_softland
 
 # ── Configuración de página ───────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Sistema Transbank | Inversiones del Norte",
+    page_title="Sistema Conciliación Transbank",
     page_icon="💳",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
         "Get Help": None,
         "Report a bug": None,
-        "About": "Sistema de Conciliación Transbank v1.0",
+        "About": "Sistema de Conciliación Transbank",
     },
 )
 
 # ── CSS personalizado ─────────────────────────────────────────────────────────
 st.markdown("""
 <style>
+    /* Layout responsive: sin scroll horizontal */
+    html, body, [data-testid="stAppViewContainer"], .main, .block-container {
+        overflow-x: hidden !important;
+        max-width: 100% !important;
+    }
+    .block-container {
+        padding-top: 1.2rem;
+        padding-left: clamp(0.6rem, 2vw, 2rem);
+        padding-right: clamp(0.6rem, 2vw, 2rem);
+    }
+
     /* Sidebar */
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, #0d2137 0%, #1f4e79 60%, #2d6a9f 100%);
@@ -53,13 +64,22 @@ st.markdown("""
         border-radius: 10px;
         padding: 12px 16px;
         border-left: 4px solid #2196f3;
+        min-width: 0;
     }
     [data-testid="stMetricLabel"]  { font-size: 0.85rem; color: #546e7a !important; }
-    [data-testid="stMetricValue"]  { font-size: 1.6rem; font-weight: 700; }
+    [data-testid="stMetricValue"]  { font-size: clamp(1.1rem, 2vw, 1.6rem); font-weight: 700; }
     [data-testid="stMetricDelta"]  { font-size: 0.8rem; }
 
-    /* Dataframes */
-    .stDataFrame { border-radius: 8px; overflow: hidden; }
+    /* Dataframes responsivos */
+    .stDataFrame, [data-testid="stDataFrame"] {
+        border-radius: 8px;
+        overflow: auto;
+        max-width: 100%;
+    }
+    .stDataFrame table { table-layout: auto; width: 100% !important; }
+
+    /* Imágenes y plotly */
+    .stPlotlyChart, .element-container img { max-width: 100% !important; height: auto !important; }
 
     /* Encabezados */
     h2 { color: #1f4e79; border-bottom: 2px solid #2196f3; padding-bottom: 6px; }
@@ -87,6 +107,7 @@ st.markdown("""
         background-color: #f0f6ff;
         padding: 6px;
         border-radius: 8px;
+        flex-wrap: wrap;
     }
     .stTabs [data-baseweb="tab"] {
         border-radius: 6px;
@@ -110,6 +131,14 @@ st.markdown("""
     .stWarning { border-radius: 8px; }
     .stError   { border-radius: 8px; }
     .stInfo    { border-radius: 8px; }
+
+    /* Mobile */
+    @media (max-width: 640px) {
+        h1 { font-size: 1.4rem; }
+        h2 { font-size: 1.2rem; }
+        h3 { font-size: 1.05rem; }
+        [data-testid="column"] { width: 100% !important; flex: 1 1 100% !important; }
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -122,7 +151,7 @@ with st.sidebar:
     <div style='text-align:center; padding: 10px 0 20px;'>
         <div style='font-size:2.5rem;'>💳</div>
         <div style='font-size:1.1rem; font-weight:700; color:#90caf9;'>Transbank System</div>
-        <div style='font-size:0.75rem; color:#78909c;'>Inversiones del Norte</div>
+        <div style='font-size:0.75rem; color:#78909c;'>Conciliación mensual</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -162,8 +191,6 @@ with st.sidebar:
 
         # Info del período seleccionado
         p_data = next((p for p in periodos if p["periodo"] == periodo_sel), {})
-        if p_data.get("empresa_nombre"):
-            st.caption(f"🏢 {p_data['empresa_nombre']}")
         if p_data.get("total_ventas"):
             st.caption(f"💰 ${p_data['total_ventas']:,.0f}")
     else:
@@ -172,8 +199,7 @@ with st.sidebar:
             st.session_state["periodo_activo"] = None
 
     st.markdown("---")
-    st.caption("Sistema Conciliación Transbank v1.0")
-    st.caption("© 2026 Inversiones del Norte")
+    st.caption("Sistema Conciliación Transbank")
 
 # ── Enrutamiento ──────────────────────────────────────────────────────────────
 if pagina == "📤 Cargar Archivos":

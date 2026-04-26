@@ -1,136 +1,72 @@
 # Sistema de Conciliación Transbank
-**INVERSIONES DEL NORTE LIMITADA · RUT 76421171-5**
 
-Aplicación web interna que reemplaza el proceso manual en Excel (`TemplateTransbankV022026.xlsm`) para conciliar, analizar y exportar las transacciones Transbank de las sucursales **AURUS**.
+Aplicación web que automatiza la conciliación, análisis y exportación de transacciones Transbank a partir de los archivos CSV descargados desde el portal.
 
----
+## Despliegue
 
-## ¿Para qué sirve?
+- App online: https://sistemavalidartbk-mzjina8xyu64i5pwe34tjf.streamlit.app/
+- Repositorio: https://github.com/CharlieBravo90Byte/SistemaValidarTBK
 
-Cada mes Transbank genera 3 archivos CSV que antes se procesaban a mano en un libro Excel de 9 hojas. Este sistema automatiza ese proceso completo:
+## ¿Qué hace?
 
-1. **Carga** los 3 CSV del portal Transbank
-2. **Parsea y normaliza** cada archivo detectando su estructura automáticamente
-3. **Guarda** en base de datos SQLite (los datos persisten entre sesiones)
-4. **Muestra** dashboards por sucursal, cuotas pendientes y resúmenes globales
-5. **Exporta** archivos listos para importar en Softland ERP
+Reemplaza un proceso manual basado en una plantilla Excel y automatiza el ciclo completo:
 
----
+1. **Carga** los archivos CSV del portal Transbank.
+2. **Parsea y normaliza** cada archivo detectando encoding, encabezados y metadatos.
+3. **Persiste** los datos en base de datos (SQLite local o Postgres si está configurado).
+4. **Visualiza** dashboards con KPIs, resúmenes diarios y cuotas pendientes.
+5. **Exporta** archivos listos para importar en Softland ERP.
 
 ## Archivos que procesa
 
 | Archivo | Descripción |
 |---|---|
-| `extraccion-masiva-debito-pesos-*.CSV` | Ventas con tarjeta débito (DB) del período |
-| `extraccion-masiva-credito-pesos-*.CSV` | Ventas con tarjeta crédito (VI/MC/AX) del período |
-| `cartola-movimientos-YYYYMM.CSV` | Cartola de movimientos Transbank (todos los tipos) |
+| `extraccion-masiva-debito-pesos-*.CSV` | Ventas con tarjeta débito |
+| `extraccion-masiva-credito-pesos-*.CSV` | Ventas con tarjeta crédito |
+| `cartola-movimientos-YYYYMM.CSV` | Cartola de movimientos Transbank |
 
-> Los archivos se descargan manualmente desde el portal Transbank y se suben a través de la interfaz web.
-
----
-
-## Cómo ejecutar
+## Cómo ejecutar localmente
 
 ```bash
-# Desde la carpeta del proyecto
-cd d:\06.-Proyectos\Transbank\SistemaTransbank
-
-# Instalar dependencias (solo la primera vez)
 pip install -r requirements.txt
-
-# Iniciar la aplicación
 python -m streamlit run app.py
 ```
 
-La aplicación queda disponible en **http://localhost:8501**
+La aplicación queda disponible en `http://localhost:8501`.
 
----
-
-## Estructura del proyecto
+## Estructura
 
 ```
 SistemaTransbank/
-│
-├── app.py                  # Punto de entrada Streamlit, navegación y CSS
-├── config.py               # Constantes globales (rutas, mapas de tipos, estados)
+├── app.py                  # Entrada Streamlit, navegación y CSS
+├── config.py               # Constantes globales
 ├── requirements.txt        # Dependencias Python
-│
+├── assets/                 # Plantilla Excel para flujo manual
 ├── core/
-│   ├── parser.py           # Parsea los 3 CSV de Transbank → DataFrames normalizados
-│   ├── database.py         # CRUD SQLite (periodos, movimientos, sucursales)
-│   ├── calculator.py       # Cálculo de comisión, IVA, neto y cuotas pendientes
-│   ├── matcher.py          # Motor de conciliación (CONCILIADO / PENDIENTE / PARCIAL)
-│   └── exporter.py         # Genera archivos de exportación (Excel, Softland CSV)
-│
+│   ├── parser.py           # Parseo de los CSV
+│   ├── database.py         # Persistencia (SQLite / Postgres)
+│   ├── calculator.py       # Cálculo de comisión, IVA, neto y cuotas
+│   ├── matcher.py          # Conciliación
+│   └── exporter.py         # Exportación a Excel y Softland
 ├── views/
-│   ├── upload.py           # Pantalla de carga de los 3 archivos CSV
-│   ├── dashboard.py        # Resumen global del período con gráficos
-│   ├── sucursales.py       # Detalle por sucursal AURUS
-│   ├── pendientes.py       # Cuotas pendientes de abono
-│   └── softland.py         # Exportación para Softland ERP
-│
-└── data/
-    └── transbank.db        # Base de datos SQLite (se crea automáticamente)
+│   ├── upload.py           # Carga de archivos CSV
+│   ├── dashboard.py        # Dashboard global del período
+│   ├── sucursales.py       # Detalle por sucursal
+│   ├── pendientes.py       # Cuotas pendientes
+│   └── softland.py         # Exportación Softland
+└── data/                   # Base de datos SQLite local (no versionada)
 ```
 
----
-
-## Flujo de uso mensual
+## Flujo de uso
 
 ```
-Portal Transbank
-      │
-      ▼
-  Descargar 3 CSV
-      │
-      ▼
-  📤 Carga (upload.py)
-  ├─ Seleccionar mes/año
-  ├─ Subir CSV Débito
-  ├─ Subir CSV Crédito
-  └─ Subir Cartola Movimientos
-      │
-      ▼
-  Parseo automático (parser.py)
-  ├─ Detecta encoding (latin-1/cp1252)
-  ├─ Detecta encabezados y metadatos
-  ├─ Normaliza columnas y tipos
-  └─ Calcula hash único (deduplicación)
-      │
-      ▼
-  Enriquecimiento (calculator.py)
-  ├─ comision_neta = comision_iva * 100/119
-  ├─ iva_comision  = comision_iva * 19/119
-  ├─ neto_final    = monto_abono - comision_iva + devoluciones
-  └─ cuotas_pendientes = cuota_total - cuota_actual
-      │
-      ▼
-  Guardado en SQLite (database.py)
-  ├─ Tabla: movimientos
-  ├─ Tabla: sucursales
-  └─ Tabla: periodos
-      │
-      ▼
-  Consulta y visualización
-  ├─ 📊 Dashboard   → KPIs globales + gráficos Plotly
-  ├─ 🏪 Sucursales  → Detalle por tienda AURUS
-  ├─ ⏳ Pendientes  → Cuotas que aún no se han abonado
-  └─ 📁 Softland    → Exporta centralización y asiento diario
+Portal Transbank → Descargar CSV → 📤 Cargar → Parseo → Enriquecimiento
+                                                          → Persistencia
+                                                          → 📊 Dashboard
+                                                          → 🏪 Por Sucursal
+                                                          → ⏳ Pendientes
+                                                          → 📁 Exportación Softland
 ```
-
----
-
-## Sucursales AURUS procesadas
-
-El sistema reconoce automáticamente las ~26 sucursales a partir del campo **Local** de los CSV:
-
-- AURUS COPIAPO · AURUS CALAMA · AURUS ANTOFAGASTA
-- AURUS LA SERENA · AURUS COQUIMBO · AURUS OVALLE
-- AURUS IQUIQUE · AURUS ARICA · AURUS ALTO HOSPICIO
-- AURUS PRAT · AURUS AMATISTA · AURUS LA MINA DE ORO
-- _(y otras según período)_
-
----
 
 ## Tipos de tarjeta reconocidos
 
@@ -154,44 +90,38 @@ El sistema reconoce automáticamente las ~26 sucursales a partir del campo **Loc
 | `C18C` | 18 cuotas |
 | `C24C` | 24 cuotas |
 
----
-
 ## Base de datos
 
-SQLite en `data/transbank.db`. Tablas principales:
+- Por defecto: **SQLite** en `data/transbank.db` (creada automáticamente).
+- Si la variable `DATABASE_URL` está definida (variable de entorno o `st.secrets`), se usa ese motor (por ejemplo, Postgres en Neon/Supabase). Formato:
 
-| Tabla | Descripción |
-|---|---|
-| `movimientos` | Todas las transacciones de todos los períodos |
-| `sucursales` | Catálogo de sucursales AURUS detectadas |
-| `periodos` | Períodos cargados con metadatos (RUT, empresa, totales) |
+```
+postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require
+```
 
-La deduplicación se hace por `hash_unico` (hash de tipo_transaccion + fecha + identificador + monto + código autorización), por lo que subir el mismo archivo dos veces no duplica datos.
-
----
+La deduplicación se hace por `hash_unico`, por lo que subir el mismo archivo dos veces no genera duplicados.
 
 ## Exportación Softland
 
-Desde la vista **Softland** se generan dos archivos CSV:
+- Centralización (`softland_centralizacion_YYYY-MM.csv`).
+- Diario (`softland_diario_YYYY-MM.csv`).
+- Excel global (`reporte_global_YYYY-MM.xlsx`).
 
-- **Centralización** (`softland_centralizacion_YYYY-MM.csv`) — asiento contable agrupado por cuenta
-- **Diario** (`softland_diario_YYYY-MM.csv`) — asiento detallado por movimiento
-- **Excel global** (`reporte_global_YYYY-MM.xlsx`) — resumen completo del período
+Separador `;` · Encoding `latin-1`.
 
-Separador: `;` · Encoding: `latin-1`
+## Flujo manual alternativo
 
----
+Desde la pantalla de **Cargar Archivos** se puede descargar la plantilla Excel original (`TemplateTransbankV032026.xlsm`) por si se prefiere realizar el proceso manualmente.
 
-## Dependencias
+## Dependencias principales
 
 | Paquete | Uso |
 |---|---|
 | `streamlit` | Interfaz web |
 | `pandas` | Procesamiento de datos |
 | `plotly` | Gráficos interactivos |
-| `openpyxl` | Lectura/escritura Excel |
-| `xlsxwriter` | Exportación Excel avanzada |
+| `openpyxl` / `xlsxwriter` | Lectura/escritura Excel |
+| `SQLAlchemy` | Acceso a base de datos |
+| `psycopg` | Driver Postgres (opcional) |
 
-```
-Python 3.12+
-```
+Requiere Python 3.12+.

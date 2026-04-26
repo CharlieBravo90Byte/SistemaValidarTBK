@@ -5,6 +5,7 @@ Página de carga de los 3 archivos CSV de Transbank.
 Parsea, valida y guarda en SQLite.
 """
 
+import os
 import streamlit as st
 import pandas as pd
 from core.parser   import parse_transbank_csv, parse_cartola_movimientos
@@ -15,9 +16,34 @@ from core.database import (
 from core.calculator import enriquecer_movimientos
 
 
+_TEMPLATE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "assets", "TemplateTransbankV032026.xlsm",
+)
+
+
+def _render_template_download():
+    """Botón para descargar la plantilla Excel del flujo manual."""
+    if not os.path.exists(_TEMPLATE_PATH):
+        return
+    with open(_TEMPLATE_PATH, "rb") as fh:
+        data = fh.read()
+    st.download_button(
+        label="⬇️ Descargar plantilla Excel (flujo manual)",
+        data=data,
+        file_name="TemplateTransbankV032026.xlsm",
+        mime="application/vnd.ms-excel.sheet.macroEnabled.12",
+        use_container_width=True,
+        help="Descarga la plantilla Excel original con macros para procesar los archivos manualmente.",
+    )
+
+
 def render_upload():
     st.markdown("## 📤 Cargar Archivos Transbank")
     st.markdown("Sube los **3 archivos CSV** descargados desde el portal Transbank para el período a procesar.")
+
+    _render_template_download()
+
     st.markdown("---")
 
     # ── Selector de período ──────────────────────────────────────────────────
