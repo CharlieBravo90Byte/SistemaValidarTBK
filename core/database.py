@@ -27,10 +27,18 @@ from config import DATA_DIR, DB_PATH, DATABASE_URL
 _engine: Engine | None = None
 
 
+def _normalize_url(url: str) -> str:
+    """Acepta el formato que entregan Neon/Supabase y lo adapta a psycopg v3."""
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    if url.startswith("postgresql://") and "+psycopg" not in url:
+        url = "postgresql+psycopg://" + url[len("postgresql://"):]
+    return url
+
+
 def _build_engine() -> Engine:
     if DATABASE_URL:
-        # Postgres / cualquier URL SQLAlchemy soportada
-        return create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
+        return create_engine(_normalize_url(DATABASE_URL), pool_pre_ping=True, future=True)
     # SQLite local
     os.makedirs(DATA_DIR, exist_ok=True)
     return create_engine(
