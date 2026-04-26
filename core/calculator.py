@@ -63,13 +63,19 @@ def consolidar_por_sucursal(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
 
-    grp = df.groupby(["local_codigo", "local_nombre", "tipo_archivo"], as_index=False).agg(
+    # Usar 'categoria' si existe (CPC, DEBITO, CREDITO)
+    group_cols = ["local_codigo", "local_nombre"]
+    if "categoria" in df.columns:
+        group_cols.append("categoria")
+    else:
+        group_cols.append("tipo_archivo")
+    grp = df.groupby(group_cols, as_index=False).agg(
         cantidad        = ("monto_original", "count"),
         total_ventas    = ("monto_original", "sum"),
         total_abono     = ("monto_abono", "sum"),
         total_comision  = ("comision_iva", "sum"),
         total_neto      = ("neto_final", "sum"),
-        ventas_cuotas   = ("monto_original", lambda s: s[df.loc[s.index, "es_cuota"]].sum()),
+        ventas_cuotas   = ("monto_original", lambda s: s[df.loc[s.index, "es_cuota"].sum()]),
         pendiente_cuotas= ("cuotas_pendientes", "sum"),
     )
     grp["pct_comision"] = (grp["total_comision"] / grp["total_ventas"].replace(0, 1) * 100).round(2)

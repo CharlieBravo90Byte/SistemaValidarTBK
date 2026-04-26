@@ -47,6 +47,9 @@ def render_upload():
     st.markdown("---")
 
     # ── Selector de período ──────────────────────────────────────────────────
+    import datetime
+    _hoy = datetime.datetime.now()
+
     col1, col2 = st.columns([1, 2])
     with col1:
         meses = {
@@ -55,11 +58,10 @@ def render_upload():
             "Julio": "07", "Agosto": "08", "Septiembre": "09",
             "Octubre": "10", "Noviembre": "11", "Diciembre": "12",
         }
-        mes_sel = st.selectbox("Mes", list(meses.keys()), index=11)
+        mes_sel = st.selectbox("Mes", list(meses.keys()), index=_hoy.month - 1)
     with col2:
-        import datetime
         anio_sel = st.number_input("Año", min_value=2020, max_value=2030,
-                                   value=datetime.datetime.now().year)
+                                   value=_hoy.year)
 
     periodo = f"{anio_sel}-{meses[mes_sel]}"
     st.info(f"📅 Período seleccionado: **{mes_sel} {anio_sel}** → `{periodo}`")

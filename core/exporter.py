@@ -39,7 +39,13 @@ def generar_softland_centralizacion(
     neto_col = "neto_final" if "neto_final" in df.columns else "neto"
 
     # Una fila por sucursal y tipo
-    grp = df.groupby(["local_codigo", "local_nombre", "tipo_archivo"], as_index=False).agg(
+
+    group_cols = ["local_codigo", "local_nombre"]
+    if "categoria" in df.columns:
+        group_cols.append("categoria")
+    else:
+        group_cols.append("tipo_archivo")
+    grp = df.groupby(group_cols, as_index=False).agg(
         total_ventas   = ("monto_original", "sum"),
         total_comision = ("comision_iva", "sum"),
         total_neto     = (neto_col, "sum"),
@@ -104,7 +110,13 @@ def generar_softland_diario(df: pd.DataFrame, periodo: str) -> bytes:
         return b""
 
     neto_col = "neto_final" if "neto_final" in df.columns else "neto"
-    grp = df.groupby(["fecha_abono", "local_codigo", "local_nombre", "tipo_archivo"], as_index=False).agg(
+
+    group_cols = ["fecha_abono", "local_codigo", "local_nombre"]
+    if "categoria" in df.columns:
+        group_cols.append("categoria")
+    else:
+        group_cols.append("tipo_archivo")
+    grp = df.groupby(group_cols, as_index=False).agg(
         total_ventas   = ("monto_original", "sum"),
         total_comision = ("comision_iva", "sum"),
         total_neto     = (neto_col, "sum"),
@@ -183,7 +195,12 @@ def generar_excel_global(df: pd.DataFrame, periodo: str) -> bytes:
             ws.write(i + 2, 1, val, fmt_money)
 
         # ── Hoja 2: Por Sucursal ──
-        grp_suc = df.groupby(["local_codigo", "local_nombre", "tipo_archivo"], as_index=False).agg(
+        group_cols = ["local_codigo", "local_nombre"]
+        if "categoria" in df.columns:
+            group_cols.append("categoria")
+        else:
+            group_cols.append("tipo_archivo")
+        grp_suc = df.groupby(group_cols, as_index=False).agg(
             Cantidad       = ("monto_original", "count"),
             Ventas         = ("monto_original", "sum"),
             Comision       = ("comision_iva", "sum"),
@@ -224,9 +241,11 @@ def generar_excel_sucursal(df: pd.DataFrame, local_nombre: str, periodo: str) ->
     buf = io.BytesIO()
     neto_col = "neto_final" if "neto_final" in df_suc.columns else "neto"
 
+
     with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
         # Resumen
-        resumen = df_suc.groupby("tipo_archivo", as_index=False).agg(
+        group_col = "categoria" if "categoria" in df_suc.columns else "tipo_archivo"
+        resumen = df_suc.groupby(group_col, as_index=False).agg(
             Cantidad  = ("monto_original", "count"),
             Ventas    = ("monto_original", "sum"),
             Comision  = ("comision_iva", "sum"),

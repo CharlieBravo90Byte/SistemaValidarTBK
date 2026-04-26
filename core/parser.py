@@ -279,6 +279,15 @@ def _normalize_df(df: pd.DataFrame, tipo_archivo: str) -> pd.DataFrame:
     # Protección: si tras el rename quedan columnas duplicadas, mantener solo la primera
     df = df.loc[:, ~df.columns.duplicated(keep="first")]
 
+
+    # Etiquetar CPC como categoría aparte
+    def categorizar(row):
+        tipo_cuota = str(row.get("tipo_cuota", "")).upper()
+        tipo_tarjeta = str(row.get("tipo_tarjeta", "")).upper()
+        if tipo_cuota in {"CFE", "CPC", "CIC"} or tipo_tarjeta == "CFE":
+            return "CPC"
+        return row.get("tipo_archivo", tipo_archivo)
+    df["categoria"] = df.apply(categorizar, axis=1)
     df["tipo_archivo"] = tipo_archivo
 
     # Parsear Local

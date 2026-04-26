@@ -18,6 +18,7 @@ from views.dashboard  import render_dashboard
 from views.sucursales import render_sucursales
 from views.pendientes import render_pendientes
 from views.softland   import render_softland
+from views.reporte_sucursal import render_reporte_sucursal
 
 # ── Configuración de página ───────────────────────────────────────────────────
 st.set_page_config(
@@ -163,6 +164,7 @@ with st.sidebar:
             "🏪 Por Sucursal",
             "⏳ Pendientes",
             "📁 Softland",
+            "📑 Reporte Sucursal",
         ],
         label_visibility="collapsed",
     )
@@ -212,3 +214,5 @@ elif pagina == "⏳ Pendientes":
     render_pendientes()
 elif pagina == "📁 Softland":
     render_softland()
+elif pagina == "📑 Reporte Sucursal":
+    render_reporte_sucursal()

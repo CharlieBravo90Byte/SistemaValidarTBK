@@ -55,7 +55,12 @@ def render_softland():
     # ── Resumen previo ────────────────────────────────────────────────────────
     st.markdown("### 📊 Resumen antes de exportar")
 
-    grp = df.groupby(["local_nombre", "tipo_archivo"], as_index=False).agg(
+    group_cols = ["local_nombre"]
+    if "categoria" in df.columns:
+        group_cols.append("categoria")
+    else:
+        group_cols.append("tipo_archivo")
+    grp = df.groupby(group_cols, as_index=False).agg(
         Transacciones  = ("monto_original", "count"),
         Ventas         = ("monto_original", "sum"),
         Comisión       = ("comision_iva", "sum"),

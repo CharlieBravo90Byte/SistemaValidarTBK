@@ -48,7 +48,12 @@ def _render_consolidado_todas(df: pd.DataFrame, periodo: str, neto_col: str):
     """Vista consolidada de todas las sucursales."""
     st.markdown(f"### 📊 Consolidado todas las sucursales — `{periodo}`")
 
-    grp = df.groupby(["local_nombre", "tipo_archivo"], as_index=False).agg(
+    group_cols = ["local_nombre"]
+    if "categoria" in df.columns:
+        group_cols.append("categoria")
+    else:
+        group_cols.append("tipo_archivo")
+    grp = df.groupby(group_cols, as_index=False).agg(
         Cantidad      = ("monto_original", "count"),
         Ventas        = ("monto_original", "sum"),
         Comisión      = ("comision_iva", "sum"),
@@ -105,15 +110,15 @@ def _render_detalle_sucursal(df: pd.DataFrame, sucursal: str, periodo: str, neto
 
     col_l, col_r = st.columns(2)
 
-    # Gráfico por tipo tarjeta
+    # Gráfico por categoría (CPC, Débito, Crédito)
     with col_l:
-        st.markdown("##### Por Tipo de Tarjeta")
-        if "tarjeta_nombre" in df_suc.columns:
-            tarj = df_suc.groupby("tarjeta_nombre")["monto_original"].sum().reset_index()
-            fig_t = px.pie(tarj, names="tarjeta_nombre", values="monto_original",
-                           color_discrete_sequence=px.colors.qualitative.Set2, height=280)
-            fig_t.update_layout(margin=dict(l=10, r=10, t=10, b=10))
-            st.plotly_chart(fig_t, use_container_width=True)
+        st.markdown("##### Por Categoría")
+        if "categoria" in df_suc.columns:
+            cat = df_suc.groupby("categoria")["monto_original"].sum().reset_index()
+            fig_cat = px.pie(cat, names="categoria", values="monto_original",
+                            color_discrete_sequence=px.colors.qualitative.Set2, height=280)
+            fig_cat.update_layout(margin=dict(l=10, r=10, t=10, b=10))
+            st.plotly_chart(fig_cat, use_container_width=True)
 
     # Gráfico por tipo cuota
     with col_r:
